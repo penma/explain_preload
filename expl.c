@@ -24,6 +24,31 @@ static void (*real_error)(int status, int errnum, const char *format, ...) = NUL
 static char *(*real_strerror)(int errnum) = NULL;
 static char *(*real_strerror_r)(int errnum, char *buf, size_t buflen) = NULL;
 
+/* Recording of libexplain output */
+
+#define RECORDED_MESSAGE_SIZE 8192
+static char recorded_message[RECORDED_MESSAGE_SIZE];
+static int recorded_errnum = 0; // if -1, then caller of ..._on_error should update with errno
+
+static void tobuf_message(explain_output_t *op, const char *text) {
+	(void)op;
+	strncpy(recorded_message, text, RECORDED_MESSAGE_SIZE);
+	recorded_message[RECORDED_MESSAGE_SIZE - 1] = '\0';
+	recorded_errnum = -1;
+}
+
+static const explain_output_vtable_t vtable = {
+	0, /* destructor */
+	tobuf_message,
+	0, /* exit */
+	sizeof(explain_output_t)
+};
+
+static explain_output_t *tobuf_new(void) {
+	return explain_output_new(&vtable);
+}
+
+
 static void resolve_real_functions(void) __attribute__((constructor));
 static void resolve_real_functions(void) {
 	real_open = dlsym(RTLD_NEXT, "open");
@@ -42,6 +67,9 @@ static void resolve_real_functions(void) {
 	real_error = dlsym(RTLD_NEXT, "error");
 	real_strerror = dlsym(RTLD_NEXT, "strerror");
 	real_strerror_r = dlsym(RTLD_NEXT, "strerror_r");
+
+	explain_output_register(tobuf_new());
+	explain_program_name_assemble(0);
 }
 
 /**
@@ -61,21 +89,14 @@ static int wrap_needed() {
 }
 
 static void wrap_done() {
+	if (recorded_errnum == -1) recorded_errnum = errno;
 	in_wrappers = 0;
 }
 
-static int recorded_errnum = 0;
-#define RECORDED_MESSAGE_SIZE 8192
-static char recorded_message[RECORDED_MESSAGE_SIZE];
 
 int open(const char *pathname, int flags, mode_t mode) {
 	if (wrap_needed()) {
-		int retval = real_open(pathname, flags, mode);
-		if (retval < 0) {
-			recorded_errnum = errno;
-			explain_message_errno_open(recorded_message, RECORDED_MESSAGE_SIZE, errno, pathname, flags, mode);
-			errno = recorded_errnum; // might have been eaten
-		}
+		int retval = explain_open_on_error(pathname, flags, mode);
 		wrap_done();
 		return retval;
 	} else {
@@ -85,12 +106,7 @@ int open(const char *pathname, int flags, mode_t mode) {
 
 int openat(int dirfd, const char *pathname, int flags, mode_t mode) {
 	if (wrap_needed()) {
-		int retval = real_openat(dirfd, pathname, flags, mode);
-		if (retval < 0) {
-			recorded_errnum = errno;
-			explain_message_errno_openat(recorded_message, RECORDED_MESSAGE_SIZE, errno, dirfd, pathname, flags, mode);
-			errno = recorded_errnum; // might have been eaten
-		}
+		int retval = explain_openat_on_error(dirfd, pathname, flags, mode);
 		wrap_done();
 		return retval;
 	} else {
@@ -100,12 +116,7 @@ int openat(int dirfd, const char *pathname, int flags, mode_t mode) {
 
 ssize_t read(int fd, void *buf, size_t count) {
 	if (wrap_needed()) {
-		int retval = real_read(fd, buf, count);
-		if (retval < 0) {
-			recorded_errnum = errno;
-			explain_message_errno_read(recorded_message, RECORDED_MESSAGE_SIZE, errno, fd, buf, count);
-			errno = recorded_errnum; // might have been eaten
-		}
+		int retval = explain_read_on_error(fd, buf, count);
 		wrap_done();
 		return retval;
 	} else {
@@ -115,12 +126,7 @@ ssize_t read(int fd, void *buf, size_t count) {
 
 ssize_t write(int fd, const void *buf, size_t count) {
 	if (wrap_needed()) {
-		int retval = real_write(fd, buf, count);
-		if (retval < 0) {
-			recorded_errnum = errno;
-			explain_message_errno_write(recorded_message, RECORDED_MESSAGE_SIZE, errno, fd, buf, count);
-			errno = recorded_errnum; // might have been eaten
-		}
+		int retval = explain_write_on_error(fd, buf, count);
 		wrap_done();
 		return retval;
 	} else {
@@ -130,12 +136,7 @@ ssize_t write(int fd, const void *buf, size_t count) {
 
 int rename(const char *oldpath, const char *newpath) {
 	if (wrap_needed()) {
-		int retval = real_rename(oldpath, newpath);
-		if (retval < 0) {
-			recorded_errnum = errno;
-			explain_message_errno_rename(recorded_message, RECORDED_MESSAGE_SIZE, errno, oldpath, newpath);
-			errno = recorded_errnum; // might have been eaten
-		}
+		int retval = explain_rename_on_error(oldpath, newpath);
 		wrap_done();
 		return retval;
 	} else {
@@ -145,12 +146,7 @@ int rename(const char *oldpath, const char *newpath) {
 
 int symlink(const char *target, const char *linkpath) {
 	if (wrap_needed()) {
-		int retval = real_symlink(target, linkpath);
-		if (retval < 0) {
-			recorded_errnum = errno;
-			explain_message_errno_symlink(recorded_message, RECORDED_MESSAGE_SIZE, errno, target, linkpath);
-			errno = recorded_errnum; // might have been eaten
-		}
+		int retval = explain_symlink_on_error(target, linkpath);
 		wrap_done();
 		return retval;
 	} else {
@@ -175,12 +171,7 @@ int symlinkat(const char *target, int newdirfd, const char *linkpath) {
 
 int execve(const char *pathname, char *const argv[], char *const envp[]) {
 	if (wrap_needed()) {
-		int retval = real_execve(pathname, argv, envp);
-		if (retval < 0) {
-			recorded_errnum = errno;
-			explain_message_errno_execve(recorded_message, RECORDED_MESSAGE_SIZE, errno, pathname, argv, envp);
-			errno = recorded_errnum; // might have been eaten
-		}
+		int retval = explain_execve_on_error(pathname, argv, envp);
 		wrap_done();
 		return retval;
 	} else {
@@ -266,4 +257,10 @@ void error(int status, int errnum, const char *format, ...) {
 		va_end(ap);
 	}
 }
+
+/* // Uncomment to shorten explanation of search permission a bit
+int explain_explain_search_permission(void *sb, const struct stat *st, const void *hip) {
+return 0;
+}
+*/
 
