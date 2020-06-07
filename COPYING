@@ -1,0 +1,27 @@
+explain_preload, by Lars Stoltenow <penma@penma.de>
+
+This code is licensed under the LGPL version 3 or later (see below for details).
+
+
+This project requires parts of the libexplain shared library to compile:
+
+       libexplain version 1.4
+       Copyright (C) 2008, 2009, 2010, 2011, 2012, 2013, 2014 Peter Miller
+
+   Library License
+       The shared library, and its include files, are GNU LGPL licensed.
+
+       This program is free software; you can redistribute it and/or modify it
+       under the terms of the GNU Lesser General Public License as published
+       by the Free Software Foundation; either version 3 of the License, or
+       (at your option) any later version.
+
+       This program is distributed in the hope that it will be useful, but
+       WITHOUT ANY WARRANTY; without even the implied warranty of
+       MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the GNU
+       Lesser General Public License for more details.
+
+       You should have received a copy of the GNU Lesser General Public
+       License along with this program. If not, see
+       <http://www.gnu.org/licenses/>.
+
