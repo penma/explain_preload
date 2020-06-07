@@ -11,5 +11,5 @@ auto_funcs.o: auto_funcs.c
 
 update_autofuncs:
 	@test -d $(LIBEXPLAIN_SOURCES) || { printf 'ERROR: libexplain sourcetree not found.\nUse `make update_autofuncs LIBEXPLAIN_SOURCES=/path/to/libexplain-sourcetree`\n' >&2; false; }
-	@test -d $(LIBEXPLAIN_SOURCES)/catalogue || { printf 'ERROR: Subdirectory `catalogue` not found in libexplain sourcetree.\nUse `make update_autofuncs LIBEXPLAIN_SOURCES=/path/to/libexplain-sourcetree`\n' >&2; false; }
-	./autowrap.pl  $(LIBEXPLAIN_SOURCES)/catalogue/* > auto_funcs.c
+	@test -d $(LIBEXPLAIN_SOURCES)/libexplain || { printf 'ERROR: Subdirectory `libexplain` not found in libexplain sourcetree.\nUse `make update_autofuncs LIBEXPLAIN_SOURCES=/path/to/libexplain-sourcetree`\n' >&2; false; }
+	./autowrap.pl  $(LIBEXPLAIN_SOURCES)/libexplain/*_or_die.c > auto_funcs.c

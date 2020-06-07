@@ -22,19 +22,11 @@ my $realfunc_inits = ""; # initialization code for real_NAME
 my $wrapfunc_impls = ""; # the actual wrappers
 
 for my $fn (@ARGV) {
-	open(my $catfile, "<", $fn);
-	my $content = join("", <$catfile>);
-	unless ($content =~ /Prototype: (.*?);?\n\S/ms) {
-		print STDERR "\e[31mbogus file $fn\e[m\n";
+	my ($name) = ($fn =~ m/(?:^|\/)(\w+)_or_die\.c$/);
+	if (!$name) {
+		print STDERR "\e[31mbogus filename $fn\e[m\n";
 		next;
 	}
-	my $proto = ($1 =~ s/\n\s*/ /gmr);
-	#print STDERR "call: $proto\n";
-	unless ($proto =~ /^(.*?)\s*(\w+)\((.*)\)$/) {
-		print STDERR "\e[31mbogus proto: $proto\e[m\n";
-		next;
-	}
-	my ($return_type, $name, $params) = ($1, $2, $3);
 
 	# better proto from manpage
 	my $manpage = IO::Zlib->new("/usr/share/man/man3/$name.3.gz", "rb");
@@ -58,6 +50,9 @@ for my $fn (@ARGV) {
 		print STDERR "\e[31mbogus manpage proto: $man_proto\e[m\n";
 		next;
 	}
+	my $return_type;
+	my $params;
+	if ($name ne $2) { die("Name mismatch: $name from filename, $2 from manpage"); }
 	($return_type, $name, $params) = ($1, $2, $3);
 
 	if (grep { $_ eq $name } @func_blacklist) {
