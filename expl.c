@@ -11,18 +11,36 @@
 
 #include <libexplain/libexplain.h>
 
-static int (*real_open)(const char *pathname, int flags, mode_t mode) = NULL;
-static int (*real_openat)(int dirfd, const char *pathname, int flags, mode_t mode) = NULL;
-static ssize_t (*real_read)(int fd, void *buf, size_t count) = NULL;
-static ssize_t (*real_write)(int fd, const void *buf, size_t count) = NULL;
-static int (*real_rename)(const char *oldpath, const char *newpath) = NULL;
-static int (*real_symlink)(const char *target, const char *linkpath) = NULL;
-static int (*real_symlinkat)(const char *target, int newdirfd, const char *linkpath) = NULL;
-static int (*real_execve)(const char *pathname, char *const argv[], char *const envp[]) = NULL;
+/*
+static void (*resolve_init_error(void))(int, int, const char *, ...) {
+	return dlsym(RTLD_NEXT, "error");
+}
+static void INIT_error(int status, int errnum, const char *format, ...) __attribute__ ((ifunc("resolve_init_error")));
+static char * (*resolve_init_strerror(void))(int) {
+	return dlsym(RTLD_NEXT, "strerror");
+}
+static char *INIT_strerror(int errnum) __attribute__ ((ifunc("resolve_init_strerror")));
+static char * (*resolve_init_strerror_r(void))(int, char *, size_t) {
+	return dlsym(RTLD_NEXT, "strerror_r");
+}
+static char *INIT_strerror_r(int errnum, char *buf, size_t buflen) __attribute__ ((ifunc("resolve_init_strerror_r")));
+*/
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-parameter"
+static void INIT_error(int status, int errnum, const char *format, ...) {
+	// swallow it
+}
+static char *INIT_strerror(int errnum) {
+	return "??";
+}
+static char *INIT_strerror_r(int errnum, char *buf, size_t buflen) {
+	return "??";
+}
+#pragma GCC diagnostic pop
 
-static void (*real_error)(int status, int errnum, const char *format, ...) = NULL;
-static char *(*real_strerror)(int errnum) = NULL;
-static char *(*real_strerror_r)(int errnum, char *buf, size_t buflen) = NULL;
+static void (*real_error)(int status, int errnum, const char *format, ...) = INIT_error;
+static char *(*real_strerror)(int errnum) = INIT_strerror;
+static char *(*real_strerror_r)(int errnum, char *buf, size_t buflen) = INIT_strerror_r;
 
 /* Recording of libexplain output */
 
@@ -49,39 +67,19 @@ static explain_output_t *tobuf_new(void) {
 }
 
 
-static void resolve_real_functions(void) __attribute__((constructor));
-static void resolve_real_functions(void) {
-	real_open = dlsym(RTLD_NEXT, "open");
-	if (real_open == NULL) {
-		fprintf(stderr, "Error in `dlsym`: %s\n", dlerror());
-	}
-	// XXX needs proper error handling
-	real_openat = dlsym(RTLD_NEXT, "openat");
-	real_read = dlsym(RTLD_NEXT, "read");
-	real_write = dlsym(RTLD_NEXT, "write");
-	real_rename = dlsym(RTLD_NEXT, "rename");
-	real_symlink = dlsym(RTLD_NEXT, "symlink");
-	real_symlinkat = dlsym(RTLD_NEXT, "symlinkat");
-	real_execve = dlsym(RTLD_NEXT, "execve");
+char *REC_Buf() { return recorded_message; }
 
-	real_error = dlsym(RTLD_NEXT, "error");
-	real_strerror = dlsym(RTLD_NEXT, "strerror");
-	real_strerror_r = dlsym(RTLD_NEXT, "strerror_r");
-
-	explain_output_register(tobuf_new());
-	explain_program_name_assemble(0);
-}
 
 /**
  * Call this at the beginning of every wrapped syscall as follows:
  *   if (wrap_needed()) { ...code to wrap...; wrap_done(); } else { return real_call(...); }
  * The purpose is to prevent libexplain from using the wrapped versions
  */
-static int in_wrappers = 0;
+static int enable_wrappers = 0; // no wrapping initially, otherwise startup code will try to use the wrappers even though they are not initialized yet
 
 static int wrap_needed() {
-	if (!in_wrappers) {
-		in_wrappers = 1;
+	if (enable_wrappers) {
+		enable_wrappers = 0;
 		return 1;
 	} else {
 		return 0;
@@ -90,70 +88,32 @@ static int wrap_needed() {
 
 static void wrap_done() {
 	if (recorded_errnum == -1) recorded_errnum = errno;
-	in_wrappers = 0;
+	enable_wrappers = 1;
 }
 
+int explainpreload_wrap_enter() { return wrap_needed(); }
+void explainpreload_wrap_leave() { wrap_done(); }
 
-int open(const char *pathname, int flags, mode_t mode) {
-	if (wrap_needed()) {
-		int retval = explain_open_on_error(pathname, flags, mode);
-		wrap_done();
-		return retval;
-	} else {
-		return real_open(pathname, flags, mode);
+static void patch_error_functions(void) __attribute__((constructor));
+static void patch_error_functions(void) {
+/*
+	real_open = dlsym(RTLD_NEXT, "open");
+	if (real_open == NULL) {
+		fprintf(stderr, "Error in `dlsym`: %s\n", dlerror());
 	}
+	// XXX needs proper error handling
+*/
+
+	real_error = dlsym(RTLD_NEXT, "error");
+	real_strerror = dlsym(RTLD_NEXT, "strerror");
+	real_strerror_r = dlsym(RTLD_NEXT, "strerror_r");
+
+	explain_output_register(tobuf_new());
+	explain_program_name_assemble(0);
+	enable_wrappers = 1;
 }
 
-int openat(int dirfd, const char *pathname, int flags, mode_t mode) {
-	if (wrap_needed()) {
-		int retval = explain_openat_on_error(dirfd, pathname, flags, mode);
-		wrap_done();
-		return retval;
-	} else {
-		return real_openat(dirfd, pathname, flags, mode);
-	}
-}
-
-ssize_t read(int fd, void *buf, size_t count) {
-	if (wrap_needed()) {
-		int retval = explain_read_on_error(fd, buf, count);
-		wrap_done();
-		return retval;
-	} else {
-		return real_read(fd, buf, count);
-	}
-}
-
-ssize_t write(int fd, const void *buf, size_t count) {
-	if (wrap_needed()) {
-		int retval = explain_write_on_error(fd, buf, count);
-		wrap_done();
-		return retval;
-	} else {
-		return real_write(fd, buf, count);
-	}
-}
-
-int rename(const char *oldpath, const char *newpath) {
-	if (wrap_needed()) {
-		int retval = explain_rename_on_error(oldpath, newpath);
-		wrap_done();
-		return retval;
-	} else {
-		return real_rename(oldpath, newpath);
-	}
-}
-
-int symlink(const char *target, const char *linkpath) {
-	if (wrap_needed()) {
-		int retval = explain_symlink_on_error(target, linkpath);
-		wrap_done();
-		return retval;
-	} else {
-		return real_symlink(target, linkpath);
-	}
-}
-
+#if 0
 int symlinkat(const char *target, int newdirfd, const char *linkpath) {
 	if (wrap_needed()) {
 		int retval = real_symlinkat(target, newdirfd, linkpath);
@@ -168,16 +128,35 @@ int symlinkat(const char *target, int newdirfd, const char *linkpath) {
 		return real_symlinkat(target, newdirfd, linkpath);
 	}
 }
+#endif
 
-int execve(const char *pathname, char *const argv[], char *const envp[]) {
-	if (wrap_needed()) {
-		int retval = explain_execve_on_error(pathname, argv, envp);
-		wrap_done();
+int __lxstat64(int __ver, const char *__filename, struct stat64 *__stat_buf) {
+	if (explainpreload_wrap_enter() && (__ver == _STAT_VER)) {
+		int retval = explain_lstat_on_error(__filename, (struct stat *)__stat_buf); // FIXME: same type(?) on x86_64, check others
+		explainpreload_wrap_leave();
 		return retval;
 	} else {
-		return real_execve(pathname, argv, envp);
+		// FIXME cache
+		int (*f)(int, const char *, struct stat64 *);
+		f = dlsym(RTLD_NEXT, "__lxstat64");
+		return f(__ver, __filename, __stat_buf);
 	}
 }
+int __lxstat(int __ver, const char *__filename, struct stat *__stat_buf) __attribute__ ((alias("__lxstat64")));
+
+int __xstat64(int __ver, const char *__filename, struct stat64 *__stat_buf) {
+	if (explainpreload_wrap_enter() && (__ver == _STAT_VER)) {
+		int retval = explain_stat_on_error(__filename, (struct stat *)__stat_buf); // FIXME: same type(?) on x86_64, check others
+		explainpreload_wrap_leave();
+		return retval;
+	} else {
+		// FIXME cache
+		int (*f)(int, const char *, struct stat64 *);
+		f = dlsym(RTLD_NEXT, "__xstat64");
+		return f(__ver, __filename, __stat_buf);
+	}
+}
+int __xstat(int __ver, const char *__filename, struct stat *__stat_buf) __attribute__ ((alias("__xstat64")));
 
 /* XXX Overriding the error reporting functions */
 
@@ -188,7 +167,7 @@ char *our_strerror_r(int errnum, char *buf, size_t buflen) {
 		 * information for, so the recorded info is worthless.
 		 * just convert code to string
 		 */
-		snprintf(buf, buflen, "%s (cause unknown)", real_strerror(errnum));
+		snprintf(buf, buflen, "%s (cause unknown, recorded info: %s)", real_strerror(errnum), recorded_message);
 	} else {
 		snprintf(buf, buflen, "%s", recorded_message);
 	}
@@ -258,9 +237,18 @@ void error(int status, int errnum, const char *format, ...) {
 	}
 }
 
-/* // Uncomment to shorten explanation of search permission a bit
+#if 1
+// Uncomment to shorten explanation of search permission a bit
+// Note, returning 0 doesn't really conform to the API, but currently libexplain doesn't check the value so it doesn't matter
+#pragma GCC diagnostic push
+#pragma GCC diagnostic ignored "-Wunused-parameter"
 int explain_explain_search_permission(void *sb, const struct stat *st, const void *hip) {
-return 0;
+	return 0;
 }
-*/
+int explain_explain_execute_permission(void *sb, const struct stat *st, const void *hip) {
+	return 0;
+}
+#pragma GCC diagnostic pop
+
+#endif
 

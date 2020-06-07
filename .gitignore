@@ -1,0 +1,4 @@
+*.so
+*.o
+/core
+/auto_funcs.c
